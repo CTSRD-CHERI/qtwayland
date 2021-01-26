@@ -185,7 +185,7 @@ void QWaylandWindow::initWindow()
     // typically be integer 1 (normal-dpi) or 2 (high-dpi). Call set_buffer_scale()
     // to inform the compositor that high-resolution buffers will be provided.
     if (mDisplay->compositorVersion() >= 3)
-        mSurface->set_buffer_scale(scale());
+        mSurface->set_buffer_scale(mScale);
 
     if (QScreen *s = window()->screen())
         setOrientationMask(s->orientationUpdateMask());
@@ -572,9 +572,9 @@ void QWaylandWindow::damage(const QRect &rect)
     if (mSurface == nullptr)
         return;
 
-    const int s = scale();
+    const qreal s = scale();
     if (mDisplay->compositorVersion() >= 4)
-        mSurface->damage_buffer(s * rect.x(), s * rect.y(), s * rect.width(), s * rect.height());
+        mSurface->damage_buffer(qFloor(s * rect.x()), qFloor(s * rect.y()), qCeil(s * rect.width()), qCeil(s * rect.height()));
     else
         mSurface->damage(rect.x(), rect.y(), rect.width(), rect.height());
 }
@@ -613,9 +613,9 @@ void QWaylandWindow::commit(QWaylandBuffer *buffer, const QRegion &damage)
 
     attachOffset(buffer);
     if (mDisplay->compositorVersion() >= 4) {
-        const int s = scale();
+        const qreal s = scale();
         for (const QRect &rect: damage)
-            mSurface->damage_buffer(s * rect.x(), s * rect.y(), s * rect.width(), s * rect.height());
+            mSurface->damage_buffer(qFloor(s * rect.x()), qFloor(s * rect.y()), qCeil(s * rect.width()), qCeil(s * rect.height()));
     } else {
         for (const QRect &rect: damage)
             mSurface->damage(rect.x(), rect.y(), rect.width(), rect.height());
@@ -1106,14 +1106,14 @@ bool QWaylandWindow::isActive() const
     return mDisplay->isWindowActivated(this);
 }
 
-int QWaylandWindow::scale() const
+qreal QWaylandWindow::scale() const
 {
-    return mScale;
+    return devicePixelRatio();
 }
 
 qreal QWaylandWindow::devicePixelRatio() const
 {
-    return mScale;
+    return qreal(mScale);
 }
 
 bool QWaylandWindow::setMouseGrabEnabled(bool grab)
