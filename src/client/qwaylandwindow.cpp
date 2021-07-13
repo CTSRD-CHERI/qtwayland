@@ -464,13 +464,14 @@ void QWaylandWindow::lower()
 
 void QWaylandWindow::setMask(const QRegion &mask)
 {
+    QReadLocker locker(&mSurfaceLock);
+    if (!mSurface)
+        return;
+
     if (mMask == mask)
         return;
 
     mMask = mask;
-
-    if (!mSurface)
-        return;
 
     if (mMask.isEmpty()) {
         mSurface->set_input_region(nullptr);
