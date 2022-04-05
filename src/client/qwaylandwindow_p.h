@@ -148,6 +148,7 @@ public:
     void setWindowState(Qt::WindowStates states) override;
     void setWindowFlags(Qt::WindowFlags flags) override;
     void handleWindowStatesChanged(Qt::WindowStates states);
+    Qt::WindowStates windowStates() const;
 
     void raise() override;
     void lower() override;
@@ -227,11 +228,10 @@ protected:
     WId mWindowId;
     bool mWaitingForFrameCallback = false;
     bool mFrameCallbackTimedOut = false; // Whether the frame callback has timed out
-    bool mWaitingForUpdateDelivery = false;
     int mFrameCallbackCheckIntervalTimerId = -1;
     QElapsedTimer mFrameCallbackElapsedTimer;
     struct ::wl_callback *mFrameCallback = nullptr;
-    QWaylandDisplay::FrameQueue mFrameQueue;
+    QMutex mFrameSyncMutex;
     QWaitCondition mFrameSyncWait;
 
     // True when we have called deliverRequestUpdate, but the client has not yet attached a new buffer

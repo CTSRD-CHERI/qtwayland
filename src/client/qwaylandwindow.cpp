@@ -76,7 +76,6 @@ QWaylandWindow *QWaylandWindow::mMouseGrab = nullptr;
 QWaylandWindow::QWaylandWindow(QWindow *window, QWaylandDisplay *display)
     : QPlatformWindow(window)
     , mDisplay(display)
-    , mFrameQueue(mDisplay->createFrameQueue())
     , mResizeAfterSwap(qEnvironmentVariableIsSet("QT_WAYLAND_RESIZE_AFTER_SWAP"))
 {
     {
@@ -95,9 +94,6 @@ QWaylandWindow::QWaylandWindow(QWindow *window, QWaylandDisplay *display)
 
 QWaylandWindow::~QWaylandWindow()
 {
-    mDisplay->destroyFrameQueue(mFrameQueue);
-    mDisplay->handleWindowDestroyed(this);
-
     delete mWindowDecoration;
 
     if (mSurface)
@@ -266,6 +262,8 @@ void QWaylandWindow::reset()
 
     mMask = QRegion();
     mQueuedBuffer = nullptr;
+
+    mDisplay->handleWindowDestroyed(this);
 }
 
 QWaylandWindow *QWaylandWindow::fromWlSurface(::wl_surface *surface)
@@ -374,7 +372,7 @@ void QWaylandWindow::setGeometry(const QRect &rect)
         mShellSurface->setWindowGeometry(windowContentGeometry());
 
     if (isOpaque() && mMask.isEmpty())
-        setOpaqueArea(rect);
+        setOpaqueArea(QRect(QPoint(0, 0), rect.size()));
 }
 
 void QWaylandWindow::resizeFromApplyConfigure(const QSize &sizeWithMargins, const QPoint &offset)
@@ -435,7 +433,6 @@ void QWaylandWindow::setVisible(bool visible)
         if (window()->type() == Qt::Popup || window()->type() == Qt::ToolTip)
             activePopups << this;
         initWindow();
-        mDisplay->flushRequests();
 
         setGeometry(windowGeometry());
         // Don't flush the events here, or else the newly visible window may start drawing, but since
@@ -555,8 +552,8 @@ void QWaylandWindow::sendRecursiveExposeEvent()
 
 void QWaylandWindow::attach(QWaylandBuffer *buffer, int x, int y)
 {
-    Q_ASSERT(!buffer->committed());
     if (buffer) {
+        Q_ASSERT(!buffer->committed());
         handleUpdate();
         buffer->setBusy();
 
@@ -574,7 +571,11 @@ void QWaylandWindow::attachOffset(QWaylandBuffer *buffer)
 
 void QWaylandWindow::damage(const QRect &rect)
 {
-    mSurface->damage(rect.x(), rect.y(), rect.width(), rect.height());
+    const int s = scale();
+    if (mDisplay->compositorVersion() >= 4)
+        mSurface->damage_buffer(s * rect.x(), s * rect.y(), s * rect.width(), s * rect.height());
+    else
+        mSurface->damage(rect.x(), rect.y(), rect.width(), rect.height());
 }
 
 void QWaylandWindow::safeCommit(QWaylandBuffer *buffer, const QRegion &damage)
@@ -608,8 +609,14 @@ void QWaylandWindow::commit(QWaylandBuffer *buffer, const QRegion &damage)
         return;
 
     attachOffset(buffer);
-    for (const QRect &rect: damage)
-        mSurface->damage(rect.x(), rect.y(), rect.width(), rect.height());
+    if (mDisplay->compositorVersion() >= 4) {
+        const int s = scale();
+        for (const QRect &rect: damage)
+            mSurface->damage_buffer(s * rect.x(), s * rect.y(), s * rect.width(), s * rect.height());
+    } else {
+        for (const QRect &rect: damage)
+            mSurface->damage(rect.x(), rect.y(), rect.width(), rect.height());
+    }
     Q_ASSERT(!buffer->committed());
     buffer->setCommitted();
     mSurface->commit();
@@ -622,42 +629,47 @@ void QWaylandWindow::commit()
 
 const wl_callback_listener QWaylandWindow::callbackListener = {
     [](void *data, wl_callback *callback, uint32_t time) {
-        Q_UNUSED(callback);
         Q_UNUSED(time);
         auto *window = static_cast<QWaylandWindow*>(data);
+
+        Q_ASSERT(callback == window->mFrameCallback);
+        wl_callback_destroy(callback);
+        window->mFrameCallback = nullptr;
+
         window->handleFrameCallback();
     }
 };
 
 void QWaylandWindow::handleFrameCallback()
 {
+    QMutexLocker locker(&mFrameSyncMutex);
+
     mWaitingForFrameCallback = false;
     mFrameCallbackElapsedTimer.invalidate();
 
     // The rest can wait until we can run it on the correct thread
-    if (!mWaitingForUpdateDelivery) {
-        auto doHandleExpose = [this]() {
-            bool wasExposed = isExposed();
-            mFrameCallbackTimedOut = false;
-            if (!wasExposed && isExposed()) // Did setting mFrameCallbackTimedOut make the window exposed?
-                sendExposeEvent(QRect(QPoint(), geometry().size()));
-            if (wasExposed && hasPendingUpdateRequest())
-                deliverUpdateRequest();
+    auto doHandleExpose = [this]() {
+        bool wasExposed = isExposed();
+        mFrameCallbackTimedOut = false;
+        if (!wasExposed && isExposed()) // Did setting mFrameCallbackTimedOut make the window exposed?
+            sendExposeEvent(QRect(QPoint(), geometry().size()));
+        if (wasExposed && hasPendingUpdateRequest())
+            deliverUpdateRequest();
+    };
 
-            mWaitingForUpdateDelivery = false;
-        };
+    // Queued connection, to make sure we don't call handleUpdate() from inside waitForFrameSync()
+    // in the single-threaded case.
+    QMetaObject::invokeMethod(this, doHandleExpose, Qt::QueuedConnection);
 
-        // Queued connection, to make sure we don't call handleUpdate() from inside waitForFrameSync()
-        // in the single-threaded case.
-        mWaitingForUpdateDelivery = true;
-        QMetaObject::invokeMethod(this, doHandleExpose, Qt::QueuedConnection);
-    }
+    mFrameSyncWait.notify_all();
 }
 
 bool QWaylandWindow::waitForFrameSync(int timeout)
 {
-    QMutexLocker locker(mFrameQueue.mutex);
-    mDisplay->dispatchQueueWhile(mFrameQueue.queue, [&]() { return mWaitingForFrameCallback; }, timeout);
+    QMutexLocker locker(&mFrameSyncMutex);
+
+    QDeadlineTimer deadline(timeout);
+    while (mWaitingForFrameCallback && mFrameSyncWait.wait(&mFrameSyncMutex, deadline)) { }
 
     if (mWaitingForFrameCallback) {
         qCDebug(lcWaylandBackingstore) << "Didn't receive frame callback in time, window should now be inexposed";
@@ -806,7 +818,7 @@ bool QWaylandWindow::createDecoration()
         decoration = false;
     if (mSubSurfaceWindow)
         decoration = false;
-    if (mShellSurface && !mShellSurface->wantsDecorations())
+    if (!mShellSurface || !mShellSurface->wantsDecorations())
         decoration = false;
 
     bool hadDecoration = mWindowDecoration;
@@ -1079,10 +1091,18 @@ bool QWaylandWindow::setMouseGrabEnabled(bool grab)
     return true;
 }
 
+Qt::WindowStates QWaylandWindow::windowStates() const
+{
+    return mLastReportedWindowStates;
+}
+
 void QWaylandWindow::handleWindowStatesChanged(Qt::WindowStates states)
 {
     createDecoration();
-    QWindowSystemInterface::handleWindowStateChanged(window(), states, mLastReportedWindowStates);
+    Qt::WindowStates statesWithoutActive = states & ~Qt::WindowActive;
+    Qt::WindowStates lastStatesWithoutActive = mLastReportedWindowStates & ~Qt::WindowActive;
+    QWindowSystemInterface::handleWindowStateChanged(window(), statesWithoutActive,
+                                                     lastStatesWithoutActive);
     mLastReportedWindowStates = states;
 }
 
@@ -1145,8 +1165,11 @@ void QWaylandWindow::requestUpdate()
     Q_ASSERT(hasPendingUpdateRequest()); // should be set by QPA
 
     // If we have a frame callback all is good and will be taken care of there
-    if (mWaitingForFrameCallback)
-        return;
+    {
+        QMutexLocker locker(&mFrameSyncMutex);
+        if (mWaitingForFrameCallback)
+            return;
+    }
 
     // If we've already called deliverUpdateRequest(), but haven't seen any attach+commit/swap yet
     // This is a somewhat redundant behavior and might indicate a bug in the calling code, so log
@@ -1159,7 +1182,12 @@ void QWaylandWindow::requestUpdate()
     // so use invokeMethod to delay the delivery a bit.
     QMetaObject::invokeMethod(this, [this] {
         // Things might have changed in the meantime
-        if (hasPendingUpdateRequest() && !mWaitingForFrameCallback)
+        {
+            QMutexLocker locker(&mFrameSyncMutex);
+            if (mWaitingForFrameCallback)
+                return;
+        }
+        if (hasPendingUpdateRequest())
             deliverUpdateRequest();
     }, Qt::QueuedConnection);
 }
@@ -1170,19 +1198,19 @@ void QWaylandWindow::requestUpdate()
 void QWaylandWindow::handleUpdate()
 {
     qCDebug(lcWaylandBackingstore) << "handleUpdate" << QThread::currentThread();
+
+    if (mWaitingForFrameCallback)
+        return;
+
     // TODO: Should sync subsurfaces avoid requesting frame callbacks?
     QReadLocker lock(&mSurfaceLock);
     if (!mSurface)
         return;
 
-    if (mFrameCallback) {
-        wl_callback_destroy(mFrameCallback);
-        mFrameCallback = nullptr;
-    }
+    QMutexLocker locker(&mFrameSyncMutex);
 
-    QMutexLocker locker(mFrameQueue.mutex);
     struct ::wl_surface *wrappedSurface = reinterpret_cast<struct ::wl_surface *>(wl_proxy_create_wrapper(mSurface->object()));
-    wl_proxy_set_queue(reinterpret_cast<wl_proxy *>(wrappedSurface), mFrameQueue.queue);
+    wl_proxy_set_queue(reinterpret_cast<wl_proxy *>(wrappedSurface), mDisplay->frameEventQueue());
     mFrameCallback = wl_surface_frame(wrappedSurface);
     wl_proxy_wrapper_destroy(wrappedSurface);
     wl_callback_add_listener(mFrameCallback, &QWaylandWindow::callbackListener, this);
@@ -1192,6 +1220,8 @@ void QWaylandWindow::handleUpdate()
     // Start a timer for handling the case when the compositor stops sending frame callbacks.
     if (mFrameCallbackTimeout > 0) {
         QMetaObject::invokeMethod(this, [this] {
+            QMutexLocker locker(&mFrameSyncMutex);
+
             if (mWaitingForFrameCallback) {
                 if (mFrameCallbackCheckIntervalTimerId < 0)
                     mFrameCallbackCheckIntervalTimerId = startTimer(mFrameCallbackTimeout);
