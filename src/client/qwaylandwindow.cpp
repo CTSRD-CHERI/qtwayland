@@ -649,6 +649,7 @@ void QWaylandWindow::handleFrameCallback()
 
     // The rest can wait until we can run it on the correct thread
     auto doHandleExpose = [this]() {
+        mWaitingForUpdateDelivery.storeRelease(false);
         bool wasExposed = isExposed();
         mFrameCallbackTimedOut = false;
         if (!wasExposed && isExposed()) // Did setting mFrameCallbackTimedOut make the window exposed?
@@ -657,9 +658,11 @@ void QWaylandWindow::handleFrameCallback()
             deliverUpdateRequest();
     };
 
-    // Queued connection, to make sure we don't call handleUpdate() from inside waitForFrameSync()
-    // in the single-threaded case.
-    QMetaObject::invokeMethod(this, doHandleExpose, Qt::QueuedConnection);
+    if (mWaitingForUpdateDelivery.testAndSetAcquire(false, true)) {
+        // Queued connection, to make sure we don't call handleUpdate() from inside waitForFrameSync()
+        // in the single-threaded case.
+        QMetaObject::invokeMethod(this, doHandleExpose, Qt::QueuedConnection);
+    }
 
     mFrameSyncWait.notify_all();
 }
