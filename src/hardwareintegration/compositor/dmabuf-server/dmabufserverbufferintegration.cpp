@@ -47,7 +47,7 @@ DmaBufServerBuffer::DmaBufServerBuffer(DmaBufServerBufferIntegration *integratio
 
     m_texture = new QOpenGLTexture(qimage);
 
-    m_image  = m_integration->eglCreateImageKHR(eglContext, EGL_GL_TEXTURE_2D_KHR, (EGLClientBuffer)(unsigned long)m_texture->textureId(), nullptr);
+    m_image  = m_integration->eglCreateImageKHR(eglContext, EGL_GL_TEXTURE_2D_KHR, (EGLClientBuffer)(uintptr_t)m_texture->textureId(), nullptr);
 
     qCDebug(qLcWaylandCompositorHardwareIntegration) << "DmaBufServerBuffer created egl image" << m_image;
 
