@@ -519,6 +519,8 @@ void QWaylandDisplay::registry_global(uint32_t id, const QString &interface, uin
 #if QT_CONFIG(wayland_client_primary_selection)
     } else if (interface == QStringLiteral("zwp_primary_selection_device_manager_v1")) {
         mPrimarySelectionManager.reset(new QWaylandPrimarySelectionDeviceManagerV1(this, id, 1));
+        for (QWaylandInputDevice *inputDevice : qAsConst(mInputDevices))
+            inputDevice->setPrimarySelectionDevice(mPrimarySelectionManager->createDevice(inputDevice));
 #endif
     } else if (interface == QStringLiteral("zwp_text_input_manager_v2") && !mClientSideInputContextRequested) {
         mTextInputManager.reset(new QtWayland::zwp_text_input_manager_v2(registry, id, 1));
@@ -577,6 +579,13 @@ void QWaylandDisplay::registry_global_remove(uint32_t id)
                     inputDevice->setTextInput(nullptr);
                 mWaylandIntegration->reconfigureInputContext();
             }
+#if QT_CONFIG(wayland_client_primary_selection)
+            if (global.interface == QStringLiteral("zwp_primary_selection_device_manager_v1")) {
+                mPrimarySelectionManager.reset();
+                for (QWaylandInputDevice *inputDevice : qAsConst(mInputDevices))
+                    inputDevice->setPrimarySelectionDevice(nullptr);
+            }
+#endif
             mGlobals.removeAt(i);
             break;
         }
