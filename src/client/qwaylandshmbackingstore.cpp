@@ -78,7 +78,7 @@ QWaylandShmBuffer::QWaylandShmBuffer(QWaylandDisplay *display,
     int alloc = stride * size.height();
     int fd = -1;
 
-#ifdef SYS_memfd_create
+#if defined(SYS_memfd_create) && defined(F_SEAL_SEAL)
     fd = syscall(SYS_memfd_create, "wayland-shm", MFD_CLOEXEC | MFD_ALLOW_SEALING);
     if (fd >= 0)
         fcntl(fd, F_ADD_SEALS, F_SEAL_SHRINK | F_SEAL_SEAL);
