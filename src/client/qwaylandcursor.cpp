@@ -44,6 +44,7 @@
 #include "qwaylandshmbackingstore_p.h"
 
 #include <QtGui/QImageReader>
+#include <QBitmap>
 #include <QDebug>
 
 #include <wayland-cursor.h>
@@ -250,7 +251,27 @@ QWaylandCursor::QWaylandCursor(QWaylandDisplay *display)
 QSharedPointer<QWaylandBuffer> QWaylandCursor::cursorBitmapBuffer(QWaylandDisplay *display, const QCursor *cursor)
 {
     Q_ASSERT(cursor->shape() == Qt::BitmapCursor);
-    const QImage &img = cursor->pixmap().toImage();
+
+    const QBitmap mask = cursor->mask(Qt::ReturnByValue);
+    QImage img;
+    if (cursor->pixmap().isNull())
+        img = cursor->bitmap(Qt::ReturnByValue).toImage();
+    else
+        img = cursor->pixmap().toImage();
+
+    // convert to supported format if necessary
+    if (!display->shm()->formatSupported(img.format())) {
+        if (mask.isNull()) {
+            img.convertTo(QImage::Format_RGB32);
+        } else {
+            // preserve mask
+            img.convertTo(QImage::Format_ARGB32);
+            QPixmap pixmap = QPixmap::fromImage(img);
+            pixmap.setMask(mask);
+            img = pixmap.toImage();
+        }
+    }
+
     QSharedPointer<QWaylandShmBuffer> buffer(new QWaylandShmBuffer(display, img.size(), img.format()));
     memcpy(buffer->image()->bits(), img.bits(), size_t(img.sizeInBytes()));
     return buffer;
