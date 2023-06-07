@@ -132,6 +132,9 @@ bool QWaylandDataDevice::startDrag(QMimeData *mimeData, Qt::DropActions supporte
     connect(m_dragSource.data(), &QWaylandDataSource::cancelled, this, &QWaylandDataDevice::dragSourceCancelled);
     connect(m_dragSource.data(), &QWaylandDataSource::dndResponseUpdated, this, [this](bool accepted, Qt::DropAction action) {
             auto drag = static_cast<QWaylandDrag *>(QGuiApplicationPrivate::platformIntegration()->drag());
+            if (!drag->currentDrag()) {
+                return;
+            }
             // in old versions drop action is not set, so we guess
             if (wl_data_source_get_version(m_dragSource->object()) < 3) {
                 drag->setResponse(accepted);
