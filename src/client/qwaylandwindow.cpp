@@ -200,6 +200,8 @@ void QWaylandWindow::initWindow()
         mShellSurface->requestWindowStates(window()->windowStates());
     handleContentOrientationChange(window()->contentOrientation());
     mFlags = window()->flags();
+
+    mSurface->commit();
 }
 
 void QWaylandWindow::initializeWlSurface()
