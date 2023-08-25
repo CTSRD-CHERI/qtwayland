@@ -478,8 +478,6 @@ void QWaylandWindow::setMask(const QRegion &mask)
         if (isOpaque())
             setOpaqueArea(mMask);
     }
-
-    mSurface->commit();
 }
 
 void QWaylandWindow::applyConfigureWhenPossible()
@@ -794,8 +792,6 @@ void QWaylandWindow::handleContentOrientationChange(Qt::ScreenOrientation orient
             Q_UNREACHABLE();
     }
     mSurface->set_buffer_transform(transform);
-    // set_buffer_transform is double buffered, we need to commit.
-    mSurface->commit();
 }
 
 void QWaylandWindow::setOrientationMask(Qt::ScreenOrientations mask)
