@@ -186,8 +186,6 @@ void QWaylandShmBackingStore::beginPaint(const QRegion &region)
     mPainting = true;
     ensureSize();
 
-    waylandWindow()->setCanResize(false);
-
     if (mBackBuffer->image()->hasAlphaChannel()) {
         QPainter p(paintDevice());
         p.setCompositionMode(QPainter::CompositionMode_Source);
@@ -202,7 +200,6 @@ void QWaylandShmBackingStore::endPaint()
     mPainting = false;
     if (mPendingFlush)
         flush(window(), mPendingRegion, QPoint());
-    waylandWindow()->setCanResize(true);
 }
 
 void QWaylandShmBackingStore::ensureSize()
