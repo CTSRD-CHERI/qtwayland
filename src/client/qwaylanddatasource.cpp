@@ -71,11 +71,6 @@ QWaylandDataSource::~QWaylandDataSource()
     destroy();
 }
 
-QMimeData * QWaylandDataSource::mimeData() const
-{
-    return m_mime_data;
-}
-
 void QWaylandDataSource::data_source_cancelled()
 {
     Q_EMIT cancelled();

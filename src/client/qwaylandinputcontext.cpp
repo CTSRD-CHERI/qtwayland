@@ -93,9 +93,14 @@ void QWaylandTextInput::reset()
 void QWaylandTextInput::commit()
 {
     if (QObject *o = QGuiApplication::focusObject()) {
-        QInputMethodEvent event;
-        event.setCommitString(m_preeditCommit);
-        QCoreApplication::sendEvent(o, &event);
+        if (!m_preeditCommit.isEmpty()) {
+
+            QInputMethodEvent event;
+            event.setCommitString(m_preeditCommit);
+            m_preeditCommit = QString();
+
+            QCoreApplication::sendEvent(o, &event);
+        }
     }
 
     reset();
@@ -412,8 +417,10 @@ bool QWaylandInputContext::isValid() const
 void QWaylandInputContext::reset()
 {
     qCDebug(qLcQpaInputMethods) << Q_FUNC_INFO;
+#if QT_CONFIG(xkbcommon)
     if (m_composeState)
         xkb_compose_state_reset(m_composeState);
+#endif
 
     QPlatformInputContext::reset();
 
