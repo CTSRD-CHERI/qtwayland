@@ -98,19 +98,6 @@ uint QWaylandScreen::requiredEvents() const
     return ret;
 }
 
-uint QWaylandScreen::requiredEvents() const
-{
-    uint ret = OutputDoneEvent;
-
-    if (mWaylandDisplay->xdgOutputManager()) {
-        ret |= XdgOutputNameEvent;
-
-        if (mWaylandDisplay->xdgOutputManager()->version() < 3)
-            ret |= XdgOutputDoneEvent;
-    }
-    return ret;
-}
-
 void QWaylandScreen::maybeInitialize()
 {
     Q_ASSERT(!mInitialized);
