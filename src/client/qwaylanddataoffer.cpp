@@ -82,6 +82,15 @@ QMimeData *QWaylandDataOffer::mimeData()
     return m_mimeData.data();
 }
 
+Qt::DropActions QWaylandDataOffer::supportedActions() const
+{
+    if (wl_data_offer_get_version(const_cast<::wl_data_offer*>(object())) < 3) {
+        return Qt::MoveAction | Qt::CopyAction;
+    }
+
+    return m_supportedActions;
+}
+
 void QWaylandDataOffer::startReceiving(const QString &mimeType, int fd)
 {
     receive(mimeType, fd);
@@ -91,6 +100,22 @@ void QWaylandDataOffer::startReceiving(const QString &mimeType, int fd)
 void QWaylandDataOffer::data_offer_offer(const QString &mime_type)
 {
     m_mimeData->appendFormat(mime_type);
+}
+
+void QWaylandDataOffer::data_offer_action(uint32_t dnd_action)
+{
+    Q_UNUSED(dnd_action);
+    // This is the compositor telling the drag target what action it should perform
+    // It does not map nicely into Qt final drop semantics, other than pretending there is only one supported action?
+}
+
+void QWaylandDataOffer::data_offer_source_actions(uint32_t source_actions)
+{
+    m_supportedActions = Qt::DropActions();
+    if (source_actions & WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE)
+        m_supportedActions |= Qt::MoveAction;
+    if (source_actions & WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY)
+        m_supportedActions |= Qt::CopyAction;
 }
 
 QWaylandMimeData::QWaylandMimeData(QWaylandAbstractDataOffer *dataOffer)
@@ -163,17 +188,18 @@ QVariant QWaylandMimeData::retrieveData_sys(const QString &mimeType, QVariant::T
 
 int QWaylandMimeData::readData(int fd, QByteArray &data) const
 {
-    fd_set readset;
-    FD_ZERO(&readset);
-    FD_SET(fd, &readset);
-    struct timeval timeout;
+    struct pollfd readset;
+    readset.fd = fd;
+    readset.events = POLLIN;
+    struct timespec timeout;
     timeout.tv_sec = 1;
-    timeout.tv_usec = 0;
+    timeout.tv_nsec = 0;
+
 
     Q_FOREVER {
-        int ready = select(FD_SETSIZE, &readset, nullptr, nullptr, &timeout);
+        int ready = qt_safe_poll(&readset, 1, &timeout);
         if (ready < 0) {
-            qWarning() << "QWaylandDataOffer: select() failed";
+            qWarning() << "QWaylandDataOffer: qt_safe_poll() failed";
             return -1;
         } else if (ready == 0) {
             qWarning("QWaylandDataOffer: timeout reading from pipe");

@@ -98,6 +98,9 @@ public:
     QWaylandWindow(QWindow *window, QWaylandDisplay *display);
     ~QWaylandWindow() override;
 
+    // Keep Toplevels position on the top left corner of their screen
+    static inline bool fixedToplevelPositions = true;
+
     virtual WindowType windowType() const = 0;
     virtual void ensureSize();
     WId winId() const override;
@@ -148,6 +151,7 @@ public:
     void setWindowState(Qt::WindowStates states) override;
     void setWindowFlags(Qt::WindowFlags flags) override;
     void handleWindowStatesChanged(Qt::WindowStates states);
+    Qt::WindowStates windowStates() const;
 
     void raise() override;
     void lower() override;
@@ -206,6 +210,10 @@ public:
     void handleUpdate();
     void deliverUpdateRequest() override;
 
+    void addChildPopup(QWaylandWindow* child);
+    void removeChildPopup(QWaylandWindow* child);
+    void closeChildPopups();
+
 public slots:
     void applyConfigure();
 
@@ -215,7 +223,11 @@ signals:
 
 protected:
     QWaylandDisplay *mDisplay = nullptr;
+
+    // mSurface can be written by the main thread. Other threads should claim a read lock for access
+    mutable QReadWriteLock mSurfaceLock;
     QScopedPointer<QWaylandSurface> mSurface;
+
     QWaylandShellSurface *mShellSurface = nullptr;
     QWaylandSubSurface *mSubSurfaceWindow = nullptr;
     QVector<QWaylandSubSurface *> mChildren;
@@ -225,13 +237,14 @@ protected:
     Qt::MouseButtons mMousePressedInContentArea = Qt::NoButton;
 
     WId mWindowId;
-    bool mWaitingForFrameCallback = false;
     bool mFrameCallbackTimedOut = false; // Whether the frame callback has timed out
-    bool mWaitingForUpdateDelivery = false;
     int mFrameCallbackCheckIntervalTimerId = -1;
-    QElapsedTimer mFrameCallbackElapsedTimer;
-    struct ::wl_callback *mFrameCallback = nullptr;
-    QWaylandDisplay::FrameQueue mFrameQueue;
+    QAtomicInt mWaitingForUpdateDelivery = false;
+
+    bool mWaitingForFrameCallback = false; // Protected by mFrameSyncMutex
+    QElapsedTimer mFrameCallbackElapsedTimer; // Protected by mFrameSyncMutex
+    struct ::wl_callback *mFrameCallback = nullptr; // Protected by mFrameSyncMutex
+    QMutex mFrameSyncMutex;
     QWaitCondition mFrameSyncWait;
 
     // True when we have called deliverRequestUpdate, but the client has not yet attached a new buffer
@@ -261,6 +274,8 @@ protected:
     QWaylandBuffer *mQueuedBuffer = nullptr;
     QRegion mQueuedBufferDamage;
 
+    QList<QPointer<QWaylandWindow>> mChildPopups;
+
 private:
     void setGeometry_helper(const QRect &rect);
     void initWindow();
@@ -283,11 +298,9 @@ private:
     QRect mLastExposeGeometry;
 
     static const wl_callback_listener callbackListener;
-    void handleFrameCallback();
+    void handleFrameCallback(struct ::wl_callback* callback);
 
     static QWaylandWindow *mMouseGrab;
-
-    mutable QReadWriteLock mSurfaceLock;
 
     friend class QWaylandSubSurface;
 };

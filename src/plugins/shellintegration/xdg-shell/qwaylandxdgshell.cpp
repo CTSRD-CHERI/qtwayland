@@ -67,11 +67,6 @@ QWaylandXdgSurface::Toplevel::Toplevel(QWaylandXdgSurface *xdgSurface)
 
 QWaylandXdgSurface::Toplevel::~Toplevel()
 {
-    if (m_applied.states & Qt::WindowActive) {
-        QWaylandWindow *window = m_xdgSurface->window();
-        window->display()->handleWindowDeactivated(window);
-    }
-
     // The protocol spec requires that the decoration object is deleted before xdg_toplevel.
     delete m_decoration;
     m_decoration = nullptr;
@@ -85,16 +80,15 @@ void QWaylandXdgSurface::Toplevel::applyConfigure()
     if (!(m_applied.states & (Qt::WindowMaximized|Qt::WindowFullScreen)))
         m_normalSize = m_xdgSurface->m_window->windowFrameGeometry().size();
 
-    if ((m_pending.states & Qt::WindowActive) && !(m_applied.states & Qt::WindowActive))
+    if ((m_pending.states & Qt::WindowActive) && !(m_applied.states & Qt::WindowActive)
+        && !m_xdgSurface->m_window->display()->isKeyboardAvailable())
         m_xdgSurface->m_window->display()->handleWindowActivated(m_xdgSurface->m_window);
 
-    if (!(m_pending.states & Qt::WindowActive) && (m_applied.states & Qt::WindowActive))
+    if (!(m_pending.states & Qt::WindowActive) && (m_applied.states & Qt::WindowActive)
+        && !m_xdgSurface->m_window->display()->isKeyboardAvailable())
         m_xdgSurface->m_window->display()->handleWindowDeactivated(m_xdgSurface->m_window);
 
-    // TODO: none of the other plugins send WindowActive either, but is it on purpose?
-    Qt::WindowStates statesWithoutActive = m_pending.states & ~Qt::WindowActive;
-
-    m_xdgSurface->m_window->handleWindowStatesChanged(statesWithoutActive);
+    m_xdgSurface->m_window->handleWindowStatesChanged(m_pending.states);
 
     if (m_pending.size.isEmpty()) {
         // An empty size in the configure means it's up to the client to choose the size
@@ -104,8 +98,6 @@ void QWaylandXdgSurface::Toplevel::applyConfigure()
     } else {
         m_xdgSurface->m_window->resizeFromApplyConfigure(m_pending.size);
     }
-
-    m_xdgSurface->setSizeHints();
 
     m_applied = m_pending;
     qCDebug(lcQpaWayland) << "Applied pending xdg_toplevel configure event:" << m_applied.size << m_applied.states;
@@ -203,12 +195,17 @@ QtWayland::xdg_toplevel::resize_edge QWaylandXdgSurface::Toplevel::convertToResi
                 | ((edges & Qt::RightEdge) ? resize_edge_right : 0));
 }
 
-QWaylandXdgSurface::Popup::Popup(QWaylandXdgSurface *xdgSurface, QWaylandXdgSurface *parent,
+QWaylandXdgSurface::Popup::Popup(QWaylandXdgSurface *xdgSurface, QWaylandWindow *parent,
                                  QtWayland::xdg_positioner *positioner)
-    : xdg_popup(xdgSurface->get_popup(parent->object(), positioner->object()))
-    , m_xdgSurface(xdgSurface)
+    : m_xdgSurface(xdgSurface)
+    , m_parentXdgSurface(qobject_cast<QWaylandXdgSurface *>(parent->shellSurface()))
     , m_parent(parent)
 {
+
+    init(xdgSurface->get_popup(m_parentXdgSurface ? m_parentXdgSurface->object() : nullptr, positioner->object()));
+    if (m_parent) {
+        m_parent->addChildPopup(m_xdgSurface->window());
+    }
 }
 
 QWaylandXdgSurface::Popup::~Popup()
@@ -216,10 +213,24 @@ QWaylandXdgSurface::Popup::~Popup()
     if (isInitialized())
         destroy();
 
+    if (m_parent) {
+        m_parent->removeChildPopup(m_xdgSurface->window());
+    }
+
     if (m_grabbing) {
         auto *shell = m_xdgSurface->m_shell;
         Q_ASSERT(shell->m_topmostGrabbingPopup == this);
-        shell->m_topmostGrabbingPopup = m_parent->m_popup;
+        shell->m_topmostGrabbingPopup = m_parentXdgSurface ? m_parentXdgSurface->m_popup : nullptr;
+        m_grabbing = false;
+
+        // Synthesize Qt enter/leave events for popup
+        QWindow *leave = nullptr;
+        if (m_xdgSurface && m_xdgSurface->window())
+            leave = m_xdgSurface->window()->window();
+        QWindowSystemInterface::handleLeaveEvent(leave);
+
+        if (QWindow *enter = QGuiApplication::topLevelAt(QCursor::pos()))
+            QWindowSystemInterface::handleEnterEvent(enter, enter->mapFromGlobal(QCursor::pos()), QCursor::pos());
     }
 }
 
@@ -257,6 +268,7 @@ QWaylandXdgSurface::QWaylandXdgSurface(QWaylandXdgShell *shell, ::xdg_surface *s
                 m_toplevel->set_parent(parentXdgSurface->m_toplevel->object());
         }
     }
+    setSizeHints();
 }
 
 QWaylandXdgSurface::~QWaylandXdgSurface()
@@ -372,10 +384,10 @@ void QWaylandXdgSurface::setSizeHints()
         const int minHeight = qMax(0, m_window->windowMinimumSize().height());
         m_toplevel->set_min_size(minWidth, minHeight);
 
-        int maxWidth = qMax(0, m_window->windowMaximumSize().width());
+        int maxWidth = qMax(minWidth, m_window->windowMaximumSize().width());
         if (maxWidth == QWINDOWSIZE_MAX)
             maxWidth = 0;
-        int maxHeight = qMax(0, m_window->windowMaximumSize().height());
+        int maxHeight = qMax(minHeight, m_window->windowMaximumSize().height());
         if (maxHeight == QWINDOWSIZE_MAX)
             maxHeight = 0;
         m_toplevel->set_max_size(maxWidth, maxHeight);
@@ -400,8 +412,6 @@ void QWaylandXdgSurface::setPopup(QWaylandWindow *parent)
 {
     Q_ASSERT(!m_toplevel && !m_popup);
 
-    auto parentXdgSurface = static_cast<QWaylandXdgSurface *>(parent->shellSurface());
-
     auto positioner = new QtWayland::xdg_positioner(m_shell->create_positioner());
     // set_popup expects a position relative to the parent
     QPoint transientPos = m_window->geometry().topLeft(); // this is absolute
@@ -414,8 +424,9 @@ void QWaylandXdgSurface::setPopup(QWaylandWindow *parent)
     positioner->set_anchor(QtWayland::xdg_positioner::anchor_top_left);
     positioner->set_gravity(QtWayland::xdg_positioner::gravity_bottom_right);
     positioner->set_size(m_window->geometry().width(), m_window->geometry().height());
-    m_popup = new Popup(this, parentXdgSurface, positioner);
+    m_popup = new Popup(this, parent, positioner);
     positioner->destroy();
+
     delete positioner;
 }
 
@@ -437,6 +448,23 @@ void QWaylandXdgSurface::setGrabPopup(QWaylandWindow *parent, QWaylandInputDevic
     }
     setPopup(parent);
     m_popup->grab(device, serial);
+
+    // Synthesize Qt enter/leave events for popup
+    if (!parent)
+        return;
+    QWindow *current = QGuiApplication::topLevelAt(QCursor::pos());
+    QWindow *leave = parent->window();
+    if (current != leave)
+        return;
+
+    QWindowSystemInterface::handleLeaveEvent(leave);
+
+    QWindow *enter = nullptr;
+    if (m_popup && m_popup->m_xdgSurface && m_popup->m_xdgSurface->window())
+        enter = m_popup->m_xdgSurface->window()->window();
+
+    if (enter)
+        QWindowSystemInterface::handleEnterEvent(enter, enter->mapFromGlobal(QCursor::pos()), QCursor::pos());
 }
 
 void QWaylandXdgSurface::xdg_surface_configure(uint32_t serial)

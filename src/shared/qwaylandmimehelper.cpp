@@ -60,7 +60,7 @@ QByteArray QWaylandMimeHelper::getByteArray(QMimeData *mimeData, const QString &
             buf.open(QIODevice::ReadWrite);
             QByteArray fmt = "BMP";
             if (mimeType.startsWith(QLatin1String("image/"))) {
-                QByteArray imgFmt = mimeType.mid(6).toUpper().toLatin1();
+                QByteArray imgFmt = mimeType.mid(6).toLower().toLatin1();
                 if (QImageWriter::supportedImageFormats().contains(imgFmt))
                     fmt = imgFmt;
             }
@@ -74,7 +74,7 @@ QByteArray QWaylandMimeHelper::getByteArray(QMimeData *mimeData, const QString &
         QList<QUrl> urls = mimeData->urls();
         for (int i = 0; i < urls.count(); ++i) {
             content.append(urls.at(i).toEncoded());
-            content.append('\n');
+            content.append("\r\n");
         }
     } else {
         content = mimeData->data(mimeType);

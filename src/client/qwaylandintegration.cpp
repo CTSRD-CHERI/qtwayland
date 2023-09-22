@@ -125,6 +125,9 @@ QWaylandIntegration::QWaylandIntegration()
 #endif
 
     reconfigureInputContext();
+
+    QWaylandWindow::fixedToplevelPositions =
+            !qEnvironmentVariableIsSet("QT_WAYLAND_DISABLE_FIXED_POSITIONS");
 }
 
 QWaylandIntegration::~QWaylandIntegration()
@@ -192,13 +195,17 @@ QAbstractEventDispatcher *QWaylandIntegration::createEventDispatcher() const
 
 void QWaylandIntegration::initialize()
 {
+    mDisplay->initEventThread();
+
+    // Call after eventDispatcher is fully connected, for QWaylandDisplay::forceRoundTrip()
+    mDisplay->initialize();
+
+    // But the aboutToBlock() and awake() should be connected after initializePlatform().
+    // Otherwise the connected flushRequests() may consumes up all events before processEvents starts to wait,
+    // so that processEvents(QEventLoop::WaitForMoreEvents) may be blocked in the forceRoundTrip().
     QAbstractEventDispatcher *dispatcher = QGuiApplicationPrivate::eventDispatcher;
     QObject::connect(dispatcher, SIGNAL(aboutToBlock()), mDisplay.data(), SLOT(flushRequests()));
     QObject::connect(dispatcher, SIGNAL(awake()), mDisplay.data(), SLOT(flushRequests()));
-
-    int fd = wl_display_get_fd(mDisplay->wl_display());
-    QSocketNotifier *sn = new QSocketNotifier(fd, QSocketNotifier::Read, mDisplay.data());
-    QObject::connect(sn, SIGNAL(activated(QSocketDescriptor)), mDisplay.data(), SLOT(flushRequests()));
 
     // Qt does not support running with no screens
     mDisplay->ensureScreen();
@@ -260,6 +267,14 @@ QPlatformServices *QWaylandIntegration::services() const
 QWaylandDisplay *QWaylandIntegration::display() const
 {
     return mDisplay.data();
+}
+
+Qt::KeyboardModifiers QWaylandIntegration::queryKeyboardModifiers() const
+{
+    if (auto *seat = mDisplay->currentInputDevice()) {
+        return seat->modifiers();
+    }
+    return Qt::NoModifier;
 }
 
 QList<int> QWaylandIntegration::possibleKeys(const QKeyEvent *event) const
@@ -479,7 +494,7 @@ void QWaylandIntegration::reconfigureInputContext()
     }
 #endif
 
-    qCDebug(lcQpaWayland) << "using input method:" << inputContext()->metaObject()->className();
+    qCDebug(lcQpaWayland) << "using input method:" << (inputContext() ? inputContext()->metaObject()->className() : "<none>");
 }
 
 QWaylandShellIntegration *QWaylandIntegration::createShellIntegration(const QString &integrationName)
