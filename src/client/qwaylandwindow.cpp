@@ -200,6 +200,8 @@ void QWaylandWindow::initWindow()
         mShellSurface->requestWindowStates(window()->windowStates());
     handleContentOrientationChange(window()->contentOrientation());
     mFlags = window()->flags();
+
+    mSurface->commit();
 }
 
 void QWaylandWindow::initializeWlSurface()
@@ -476,8 +478,6 @@ void QWaylandWindow::setMask(const QRegion &mask)
         if (isOpaque())
             setOpaqueArea(mMask);
     }
-
-    mSurface->commit();
 }
 
 void QWaylandWindow::applyConfigureWhenPossible()
@@ -792,8 +792,6 @@ void QWaylandWindow::handleContentOrientationChange(Qt::ScreenOrientation orient
             Q_UNREACHABLE();
     }
     mSurface->set_buffer_transform(transform);
-    // set_buffer_transform is double buffered, we need to commit.
-    mSurface->commit();
 }
 
 void QWaylandWindow::setOrientationMask(Qt::ScreenOrientations mask)
@@ -1082,7 +1080,10 @@ void QWaylandWindow::setMouseCursor(QWaylandInputDevice *device, const QCursor &
 
 void QWaylandWindow::restoreMouseCursor(QWaylandInputDevice *device)
 {
-    setMouseCursor(device, window()->cursor());
+    if (const QCursor *overrideCursor = QGuiApplication::overrideCursor())
+        setMouseCursor(device, *overrideCursor);
+    else
+        setMouseCursor(device, window()->cursor());
 }
 #endif
 
@@ -1346,3 +1347,5 @@ void QWaylandWindow::closeChildPopups() {
 }
 
 QT_END_NAMESPACE
+
+#include "moc_qwaylandwindow_p.cpp"

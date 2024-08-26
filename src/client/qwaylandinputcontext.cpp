@@ -94,11 +94,9 @@ void QWaylandTextInput::commit()
 {
     if (QObject *o = QGuiApplication::focusObject()) {
         if (!m_preeditCommit.isEmpty()) {
-
             QInputMethodEvent event;
             event.setCommitString(m_preeditCommit);
             m_preeditCommit = QString();
-
             QCoreApplication::sendEvent(o, &event);
         }
     }
@@ -670,3 +668,5 @@ bool QWaylandInputContext::filterEvent(const QEvent *event)
 }
 
 QT_END_NAMESPACE
+
+#include "moc_qwaylandinputcontext_p.cpp"

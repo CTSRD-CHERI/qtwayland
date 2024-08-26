@@ -263,7 +263,7 @@ QString QWaylandInputDevice::Pointer::cursorThemeName() const
 
 int QWaylandInputDevice::Pointer::cursorSize() const
 {
-    constexpr int defaultCursorSize = 32;
+    constexpr int defaultCursorSize = 24;
     static const int xCursorSize = qEnvironmentVariableIntValue("XCURSOR_SIZE");
     return xCursorSize > 0 ? xCursorSize : defaultCursorSize;
 }
@@ -845,7 +845,7 @@ void QWaylandInputDevice::Pointer::releaseButtons()
     mButtons = Qt::NoButton;
 
     if (auto *window = focusWindow()) {
-        MotionEvent e(focusWindow(), mParent->mTime, mSurfacePos, mGlobalPos, mButtons, mParent->modifiers());
+        ReleaseEvent e(focusWindow(), mParent->mTime, mSurfacePos, mGlobalPos, mButtons, Qt::NoButton, mParent->modifiers());
         window->handleMouse(mParent, e);
     }
 }
@@ -1498,3 +1498,5 @@ void QWaylandInputDevice::Touch::touch_frame()
 }
 
 QT_END_NAMESPACE
+
+#include "moc_qwaylandinputdevice_p.cpp"

@@ -44,6 +44,7 @@
 #include <QtWaylandClient/private/qwaylandwindow_p.h>
 #include <QtWaylandClient/private/qwaylandinputdevice_p.h>
 #include <QtWaylandClient/private/qwaylandscreen_p.h>
+#include <QtWaylandClient/private/qwaylandcursor_p.h>
 #include <QtWaylandClient/private/qwaylandabstractdecoration_p.h>
 
 #include <QtGui/private/qwindow_p.h>
@@ -229,8 +230,10 @@ QWaylandXdgSurface::Popup::~Popup()
             leave = m_xdgSurface->window()->window();
         QWindowSystemInterface::handleLeaveEvent(leave);
 
-        if (QWindow *enter = QGuiApplication::topLevelAt(QCursor::pos()))
-            QWindowSystemInterface::handleEnterEvent(enter, enter->mapFromGlobal(QCursor::pos()), QCursor::pos());
+        if (QWindow *enter = QGuiApplication::topLevelAt(QCursor::pos())) {
+            const auto pos = m_xdgSurface->window()->display()->waylandCursor()->pos();
+            QWindowSystemInterface::handleEnterEvent(enter, enter->handle()->mapFromGlobal(pos), pos);
+        }
     }
 }
 
@@ -367,9 +370,6 @@ bool QWaylandXdgSurface::wantsDecorations() const
 void QWaylandXdgSurface::propagateSizeHints()
 {
     setSizeHints();
-
-    if (m_toplevel && m_window)
-        m_window->commit();
 }
 
 void QWaylandXdgSurface::setWindowGeometry(const QRect &rect)
@@ -465,8 +465,10 @@ void QWaylandXdgSurface::setGrabPopup(QWaylandWindow *parent, QWaylandInputDevic
     if (m_popup && m_popup->m_xdgSurface && m_popup->m_xdgSurface->window())
         enter = m_popup->m_xdgSurface->window()->window();
 
-    if (enter)
-        QWindowSystemInterface::handleEnterEvent(enter, enter->mapFromGlobal(QCursor::pos()), QCursor::pos());
+    if (enter) {
+        const auto pos = m_popup->m_xdgSurface->window()->display()->waylandCursor()->pos();
+        QWindowSystemInterface::handleEnterEvent(enter, enter->handle()->mapFromGlobal(pos), pos);
+    }
 }
 
 void QWaylandXdgSurface::xdg_surface_configure(uint32_t serial)
@@ -522,3 +524,5 @@ void QWaylandXdgShell::handleRegistryGlobal(void *data, wl_registry *registry, u
 }
 
 QT_END_NAMESPACE
+
+#include "moc_qwaylandxdgshell_p.cpp"
